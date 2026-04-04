@@ -8,9 +8,7 @@ import (
 
 func main() {
 	serverMux := http.NewServeMux()
-	//serverMux.Handle("/", http.FileServer(http.Dir(".")))
 	serverMux.Handle("/", http.FileServer(http.Dir(".")))
-	//serverMux.Handle("/", http.FileServer(http.Dir("./Chirpy")))
 	server := http.Server{
 		Addr:    ":8080",
 		Handler: serverMux,
