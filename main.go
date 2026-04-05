@@ -1,21 +1,25 @@
 package main
 
 import (
-	"fmt"
+	"log"
 	"net/http"
-	"os"
 )
 
 func main() {
+	const filepathRoot = "."
+	const port = ":8080"
 	serverMux := http.NewServeMux()
-	serverMux.Handle("/", http.FileServer(http.Dir(".")))
+	serverMux.Handle("/app/", http.StripPrefix("/app", http.FileServer(http.Dir(filepathRoot))))
+	serverMux.HandleFunc("/healthz",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.WriteHeader(200)
+			w.Write([]byte("OK"))
+		})
 	server := http.Server{
-		Addr:    ":8080",
+		Addr:    port,
 		Handler: serverMux,
 	}
-	err := server.ListenAndServe()
-	if err != nil {
-		fmt.Println("error listening and serving lol", err)
-		os.Exit(1)
-	}
+	log.Printf("Serving files from %s on port: %s\n", filepathRoot, port)
+	log.Fatal(server.ListenAndServe())
 }
