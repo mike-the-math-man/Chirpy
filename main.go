@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync/atomic"
 )
 
@@ -38,7 +40,28 @@ type error_response struct {
 }
 
 type valid_response struct {
-	Valid bool `json:"valid"`
+	Valid       bool   `json:"valid"`
+	CleanedBody string `json:"cleaned_body"`
+}
+
+func cleanInput(s string, words []string) string {
+	if len(words) == 0 {
+		return s
+	}
+	pattern := `(?i)\b(` + strings.Join(words, "|") + `)\b`
+	re := regexp.MustCompile(pattern)
+	return re.ReplaceAllString(s, "****")
+	/*
+		split_string := strings.Split(s, " ")
+		for i, word := range split_string {
+			for _, bad_word := range words {
+				if strings.EqualFold(word, bad_word) {
+					split_string[i] = "****"
+				}
+			}
+		}
+		return strings.Join(split_string, " ")
+	*/
 }
 
 func respondWithError(w http.ResponseWriter, code int, msg string) {
@@ -72,7 +95,8 @@ func validate_chirp_handler(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 400, "Chirp is too long")
 		return
 	}
-	respondWithJSON(w, 200, valid_response{Valid: true})
+	banned_words := []string{"kerfuffle", "sharbert", "fornax"}
+	respondWithJSON(w, 200, valid_response{CleanedBody: cleanInput(params.Body, banned_words)})
 }
 
 func main() {
