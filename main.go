@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"github.com/mike-the-math-man/Chirpy.git/internal/auth"
 	"github.com/mike-the-math-man/Chirpy.git/internal/database"
 )
 
@@ -70,8 +71,9 @@ type valid_response struct {
 	CleanedBody string `json:"cleaned_body"`
 }
 
-type user_email struct {
-	Email string `json:"email"`
+type user_email_password struct {
+	Email          string `json:"email"`
+	HashedPassword string `json:"password"`
 }
 
 type User struct {
@@ -121,14 +123,24 @@ func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
 func (cfg *apiConfig) users_handler(w http.ResponseWriter, r *http.Request) {
 
 	decoder := json.NewDecoder(r.Body)
-	params := user_email{}
+	params := user_email_password{}
 	err := decoder.Decode(&params)
 	if err != nil {
 		log.Printf("Error decoding parameters: %s", err)
 		respondWithError(w, 500, "Error decoding parameters")
 		return
 	}
-	user, err := cfg.databaseQueries.CreateUser(r.Context(), params.Email)
+	if len(params.HashedPassword) < 1 {
+		fmt.Println("please provide password")
+		respondWithError(w, 400, "please provide password")
+	}
+	params.HashedPassword, err = auth.HashPassword(params.HashedPassword)
+	if err != nil {
+		log.Printf("Error hashing password: %s", err)
+		respondWithError(w, 500, "Error hashing password")
+		return
+	}
+	user, err := cfg.databaseQueries.CreateUser(r.Context(), database.CreateUserParams{Email: params.Email, HashedPassword: params.HashedPassword})
 	if err != nil {
 		log.Printf("Error creating user: %s", err)
 		respondWithError(w, 500, "Error creating user")
@@ -140,6 +152,40 @@ func (cfg *apiConfig) users_handler(w http.ResponseWriter, r *http.Request) {
 	user_struct.Email = user.Email
 	user_struct.ID = user.ID
 	respondWithJSON(w, 201, user_struct)
+}
+
+func (cfg *apiConfig) login(w http.ResponseWriter, r *http.Request) {
+	decoder := json.NewDecoder(r.Body)
+	params := user_email_password{}
+	err := decoder.Decode(&params)
+	if err != nil {
+		log.Printf("Error decoding parameters: %s", err)
+		respondWithError(w, 500, "Error decoding parameters")
+		return
+	}
+	user, err := cfg.databaseQueries.GetUserByEmail(r.Context(), params.Email)
+	if err != nil {
+		fmt.Printf("Error getting hashed password %v\n", err)
+		respondWithError(w, 401, "Incorrect email or password")
+		return
+	}
+	valid, err := auth.CheckPasswordHash(params.HashedPassword, user.HashedPassword)
+	if err != nil {
+		fmt.Printf("Error validating hashed password %v\n", err)
+		respondWithError(w, 401, "Incorrect email or password")
+		return
+	}
+	user_struct := User{}
+	user_struct.CreatedAt = user.CreatedAt
+	user_struct.UpdatedAt = user.UpdatedAt
+	user_struct.Email = user.Email
+	user_struct.ID = user.ID
+	if valid {
+		respondWithJSON(w, 200, user_struct)
+	} else {
+		respondWithError(w, 401, "Incorrect email or password")
+	}
+
 }
 
 /*
@@ -261,6 +307,7 @@ func main() {
 	serverMux.HandleFunc("POST /api/chirps", apiCfg.chirps_handler)
 	serverMux.HandleFunc("GET /api/chirps", apiCfg.chirps_get_handler)
 	serverMux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.chirps_get_individual_handler)
+	serverMux.HandleFunc("POST /api/login", apiCfg.login)
 	server := http.Server{
 		Addr:    port,
 		Handler: serverMux,
