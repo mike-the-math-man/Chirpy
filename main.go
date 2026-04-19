@@ -43,11 +43,22 @@ func (cfg *apiConfig) handler_reset(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg.fileserverHits.Store(0)
 	w.Write([]byte(fmt.Sprintf("Hits: %d", 0)))
-	cfg.databaseQueries.DeleteUsers(r.Context())
+	err := cfg.databaseQueries.DeleteUsers(r.Context())
+	if err != nil {
+		fmt.Printf("error deleting users: %v\n", err)
+	}
 }
 
 type validate_chirp struct {
 	Body string `json:"body"`
+}
+
+type full_chirp struct {
+	Id        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserId    uuid.UUID `json:"user_id"`
 }
 
 type error_response struct {
@@ -131,10 +142,29 @@ func (cfg *apiConfig) users_handler(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, 201, user_struct)
 }
 
+/*
 func validate_chirp_handler(w http.ResponseWriter, r *http.Request) {
 
+		decoder := json.NewDecoder(r.Body)
+		params := validate_chirp{}
+		err := decoder.Decode(&params)
+		if err != nil {
+			log.Printf("Error decoding parameters: %s", err)
+			respondWithError(w, 500, "Error decoding parameters")
+			return
+		}
+		if len(params.Body) > 140 {
+			respondWithError(w, 400, "Chirp is too long")
+			return
+		}
+		banned_words := []string{"kerfuffle", "sharbert", "fornax"}
+		respondWithJSON(w, 200, valid_response{CleanedBody: cleanInput(params.Body, banned_words)})
+	}
+*/
+func (cfg *apiConfig) chirps_handler(w http.ResponseWriter, r *http.Request) {
+
 	decoder := json.NewDecoder(r.Body)
-	params := validate_chirp{}
+	params := full_chirp{}
 	err := decoder.Decode(&params)
 	if err != nil {
 		log.Printf("Error decoding parameters: %s", err)
@@ -146,7 +176,15 @@ func validate_chirp_handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	banned_words := []string{"kerfuffle", "sharbert", "fornax"}
-	respondWithJSON(w, 200, valid_response{CleanedBody: cleanInput(params.Body, banned_words)})
+	params.Body = cleanInput(params.Body, banned_words)
+	chirp, err := cfg.databaseQueries.CreateChirp(r.Context(), database.CreateChirpParams{Body: params.Body, UserID: params.UserId})
+	chirp_data := full_chirp{}
+	chirp_data.Id = chirp.ID
+	chirp_data.Body = chirp.Body
+	chirp_data.CreatedAt = chirp.CreatedAt
+	chirp_data.UpdatedAt = chirp.UpdatedAt
+	chirp_data.UserId = chirp.UserID
+	respondWithJSON(w, 201, chirp_data)
 }
 
 func main() {
@@ -173,8 +211,9 @@ func main() {
 		})
 	serverMux.HandleFunc("GET /admin/metrics", apiCfg.handler_metric)
 	serverMux.HandleFunc("POST /admin/reset", apiCfg.handler_reset)
-	serverMux.HandleFunc("POST /api/validate_chirp", validate_chirp_handler)
+	//serverMux.HandleFunc("POST /api/validate_chirp", validate_chirp_handler)
 	serverMux.HandleFunc("POST /api/users", apiCfg.users_handler)
+	serverMux.HandleFunc("POST /api/chirps", apiCfg.chirps_handler)
 	server := http.Server{
 		Addr:    port,
 		Handler: serverMux,
