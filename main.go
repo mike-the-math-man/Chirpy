@@ -42,7 +42,7 @@ func (cfg *apiConfig) handler_reset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg.fileserverHits.Store(0)
-	w.Write([]byte(fmt.Sprintf("Hits: %d", 0)))
+	w.Write([]byte(fmt.Sprintf("Hits: %d\n", 0)))
 	err := cfg.databaseQueries.DeleteUsers(r.Context())
 	if err != nil {
 		fmt.Printf("error deleting users: %v\n", err)
@@ -187,6 +187,51 @@ func (cfg *apiConfig) chirps_handler(w http.ResponseWriter, r *http.Request) {
 	respondWithJSON(w, 201, chirp_data)
 }
 
+func (cfg *apiConfig) chirps_get_handler(w http.ResponseWriter, r *http.Request) {
+	chirps, err := cfg.databaseQueries.GetChirps(r.Context())
+	if err != nil {
+		fmt.Printf("error getting chirps %v\n", err)
+		respondWithError(w, 500, "Error getting chirps")
+		return
+	}
+	chirp_data_list := []full_chirp{}
+	for _, chirp := range chirps {
+		chirp_data := full_chirp{}
+		chirp_data.Id = chirp.ID
+		chirp_data.Body = chirp.Body
+		chirp_data.CreatedAt = chirp.CreatedAt
+		chirp_data.UpdatedAt = chirp.UpdatedAt
+		chirp_data.UserId = chirp.UserID
+		chirp_data_list = append(chirp_data_list, chirp_data)
+	}
+
+	respondWithJSON(w, 200, chirp_data_list)
+}
+
+func (cfg *apiConfig) chirps_get_individual_handler(w http.ResponseWriter, r *http.Request) {
+	chirp_user_id_string := r.PathValue("chirpID")
+	chirp_user_id_uuid, err := uuid.Parse(chirp_user_id_string)
+	if err != nil {
+		fmt.Printf("error parsing user_id %v\n", err)
+		respondWithError(w, 500, "")
+		return
+	}
+	chirp, err := cfg.databaseQueries.GetChirp(r.Context(), chirp_user_id_uuid)
+	if err != nil {
+		fmt.Printf("error getting chirp %v\n", err)
+		respondWithError(w, 404, "")
+		return
+	}
+	chirp_data := full_chirp{}
+	chirp_data.Id = chirp.ID
+	chirp_data.Body = chirp.Body
+	chirp_data.CreatedAt = chirp.CreatedAt
+	chirp_data.UpdatedAt = chirp.UpdatedAt
+	chirp_data.UserId = chirp.UserID
+
+	respondWithJSON(w, 200, chirp_data)
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -214,6 +259,8 @@ func main() {
 	//serverMux.HandleFunc("POST /api/validate_chirp", validate_chirp_handler)
 	serverMux.HandleFunc("POST /api/users", apiCfg.users_handler)
 	serverMux.HandleFunc("POST /api/chirps", apiCfg.chirps_handler)
+	serverMux.HandleFunc("GET /api/chirps", apiCfg.chirps_get_handler)
+	serverMux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.chirps_get_individual_handler)
 	server := http.Server{
 		Addr:    port,
 		Handler: serverMux,
