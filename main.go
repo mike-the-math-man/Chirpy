@@ -50,10 +50,11 @@ func (cfg *apiConfig) handler_reset(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-type validate_chirp struct {
-	Body string `json:"body"`
-}
-
+/*
+	type validate_chirp struct {
+		Body string `json:"body"`
+	}
+*/
 type full_chirp struct {
 	Id        uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
@@ -66,11 +67,12 @@ type error_response struct {
 	Error string `json:"error"`
 }
 
-type valid_response struct {
-	Valid       bool   `json:"valid"`
-	CleanedBody string `json:"cleaned_body"`
-}
-
+/*
+	type valid_response struct {
+		Valid       bool   `json:"valid"`
+		CleanedBody string `json:"cleaned_body"`
+	}
+*/
 type user_email_password struct {
 	Email          string `json:"email"`
 	HashedPassword string `json:"password"`
