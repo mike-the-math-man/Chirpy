@@ -2,6 +2,8 @@ package auth
 
 import (
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -29,12 +31,24 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 		return []byte(tokenSecret), nil
 	})
 	if err != nil {
+		fmt.Printf("error getting token with parse %v", err)
 		return uuid.Nil, err
 	}
 	string_id, err := token.Claims.GetSubject()
 	if err != nil {
+		fmt.Printf("error getting subject %v", err)
 		return uuid.Nil, err
 	}
-	fmt.Println(string_id)
+	//fmt.Println(string_id)
 	return uuid.Parse(string_id)
+}
+
+func GetBearerToken(headers http.Header) (string, error) {
+	bearer_token := headers.Get("Authorization")
+	if bearer_token == "" {
+		fmt.Println("bearer_token = empty")
+		return bearer_token, fmt.Errorf("No auth")
+	}
+	token_string := strings.Split(bearer_token, " ")[1]
+	return token_string, nil
 }

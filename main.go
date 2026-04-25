@@ -23,6 +23,7 @@ type apiConfig struct {
 	fileserverHits  atomic.Int32
 	databaseQueries *database.Queries
 	env_platform    string
+	env_JWT_scret   string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -74,8 +75,9 @@ type error_response struct {
 	}
 */
 type user_email_password struct {
-	Email          string `json:"email"`
-	HashedPassword string `json:"password"`
+	Email            string `json:"email"`
+	HashedPassword   string `json:"password"`
+	ExpiresInSeconds int    `json:"expires_in_second"`
 }
 
 type User struct {
@@ -83,6 +85,7 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+	Token     string    `json:"token"`
 }
 
 func cleanInput(s string, words []string) string {
@@ -177,11 +180,20 @@ func (cfg *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 401, "Incorrect email or password")
 		return
 	}
+	expiration_time := params.ExpiresInSeconds
+	if expiration_time == 0 || expiration_time > 3600 {
+		expiration_time = 60 * 60
+	}
 	user_struct := User{}
 	user_struct.CreatedAt = user.CreatedAt
 	user_struct.UpdatedAt = user.UpdatedAt
 	user_struct.Email = user.Email
 	user_struct.ID = user.ID
+	user_struct.Token, err = auth.MakeJWT(user_struct.ID, cfg.env_JWT_scret, time.Duration(expiration_time)*time.Second)
+	if err != nil {
+		fmt.Println("Error getting token")
+		return
+	}
 	if valid {
 		respondWithJSON(w, 200, user_struct)
 	} else {
@@ -223,12 +235,25 @@ func (cfg *apiConfig) chirps_handler(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 400, "Chirp is too long")
 		return
 	}
+	bearer_token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		fmt.Println("Error getting token")
+		respondWithJSON(w, 401, "Unauthorized")
+		return
+	}
+	user_id, err := auth.ValidateJWT(bearer_token, cfg.env_JWT_scret)
+	if err != nil {
+		fmt.Println("error validating JWT")
+		respondWithJSON(w, 401, "Unauthorized")
+		return
+	}
 	banned_words := []string{"kerfuffle", "sharbert", "fornax"}
 	params.Body = cleanInput(params.Body, banned_words)
-	chirp, err := cfg.databaseQueries.CreateChirp(r.Context(), database.CreateChirpParams{Body: params.Body, UserID: params.UserId})
+	chirp, err := cfg.databaseQueries.CreateChirp(r.Context(), database.CreateChirpParams{Body: params.Body, UserID: user_id})
 	chirp_data := full_chirp{}
 	chirp_data.Id = chirp.ID
 	chirp_data.Body = chirp.Body
+	//fmt.Println(chirp.CreatedAt)
 	chirp_data.CreatedAt = chirp.CreatedAt
 	chirp_data.UpdatedAt = chirp.UpdatedAt
 	chirp_data.UserId = chirp.UserID
@@ -292,6 +317,8 @@ func main() {
 	const port = ":8080"
 	var apiCfg apiConfig
 	platform := os.Getenv("PLATFORM")
+	jwt_auth := os.Getenv("JWT_SECRET")
+	apiCfg.env_JWT_scret = jwt_auth
 	apiCfg.env_platform = platform
 	apiCfg.databaseQueries = dbQueries
 	serverMux := http.NewServeMux()
