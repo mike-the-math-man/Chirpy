@@ -12,12 +12,117 @@ A simple Twitter-like API built with Go as part of the boot.dev Go HTTP Servers 
 
 ## API Endpoints
 
-- `GET /api/healthz` - Health check
-- `GET /admin/metrics` - View server metrics (hit count)
-- `POST /admin/reset` - Reset metrics and delete all users (dev mode only)
-- `POST /api/users` - Create a new user
-- `POST /api/chirps` - Create a new chirp
-- `GET /app/*` - Serve static files
+The API exposes the following resources, paths, HTTP methods, and JSON shapes.
+
+### Public Endpoints
+
+- `GET /api/healthz`
+  - Description: Health check
+  - Request: none
+  - Response: plain text `OK`
+
+- `POST /api/users`
+  - Description: Create a new user
+  - Request JSON:
+    - `email` (string)
+    - `password` (string)
+  - Response JSON:
+    - `id` (UUID)
+    - `created_at` (timestamp)
+    - `updated_at` (timestamp)
+    - `email` (string)
+
+- `POST /api/login`
+  - Description: Authenticate a user
+  - Request JSON:
+    - `email` (string)
+    - `password` (string)
+  - Response JSON:
+    - `id` (UUID)
+    - `created_at` (timestamp)
+    - `updated_at` (timestamp)
+    - `email` (string)
+    - `token` (JWT string)
+    - `refresh_token` (string)
+
+### Authenticated User Endpoints
+
+- `PUT /api/users`
+  - Description: Update the authenticated user's email and password
+  - Requires: `Authorization: Bearer <JWT>` header
+  - Request JSON:
+    - `email` (string)
+    - `password` (string)
+  - Response JSON:
+    - `id` (UUID)
+    - `created_at` (timestamp)
+    - `updated_at` (timestamp)
+    - `email` (string)
+
+- `POST /api/chirps`
+  - Description: Create a new chirp
+  - Requires: `Authorization: Bearer <JWT>` header
+  - Request JSON:
+    - `body` (string, max 140 characters)
+    - `user_id` (UUID) — accepted but ignored; the authenticated user is used instead
+  - Response JSON:
+    - `id` (UUID)
+    - `created_at` (timestamp)
+    - `updated_at` (timestamp)
+    - `body` (string)
+    - `user_id` (UUID)
+
+- `GET /api/chirps`
+  - Description: List all chirps
+  - Request: none
+  - Response JSON: array of chirp objects
+    - `id` (UUID)
+    - `created_at` (timestamp)
+    - `updated_at` (timestamp)
+    - `body` (string)
+    - `user_id` (UUID)
+
+- `GET /api/chirps/{chirpID}`
+  - Description: Get a single chirp by its ID
+  - Request: none
+  - Response JSON:
+    - `id` (UUID)
+    - `created_at` (timestamp)
+    - `updated_at` (timestamp)
+    - `body` (string)
+    - `user_id` (UUID)
+
+### Refresh Token Endpoints
+
+- `POST /api/refresh`
+  - Description: Exchange a refresh token for a new JWT
+  - Requires: `Authorization: Bearer <refresh_token>` header
+  - Response JSON:
+    - `token` (string)
+
+- `POST /api/revoke`
+  - Description: Revoke the current refresh token
+  - Requires: `Authorization: Bearer <refresh_token>` header
+  - Response: HTTP 204 No Content
+
+### Admin / Dev Endpoints
+
+- `GET /admin/metrics`
+  - Description: View server metrics / hit count
+  - Request: none
+  - Response: HTML page showing visit count
+
+- `POST /admin/reset`
+  - Description: Reset metrics and delete all users
+  - Requires: `PLATFORM=dev`
+  - Request: none
+  - Response: plain text confirmation
+
+### Static Files
+
+- `GET /app/*`
+  - Description: Serve static assets from the project root
+  - Example: `GET /app/index.html`
 
 ## Dependencies
 

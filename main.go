@@ -360,6 +360,54 @@ func (cfg *apiConfig) revoke(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
+func (cfg *apiConfig) userEmailUpdate(w http.ResponseWriter, r *http.Request) {
+
+	bearer_token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		fmt.Println("Error getting token")
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	user_id, err := auth.ValidateJWT(bearer_token, cfg.env_JWT_scret)
+	if err != nil {
+		fmt.Println("Error getting token")
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	user_data := user_email_password{}
+	decoder := json.NewDecoder(r.Body)
+	err = decoder.Decode(&user_data)
+	if err != nil {
+		log.Printf("Error decoding parameters: %s", err)
+		respondWithError(w, 500, "Error decoding parameters")
+		return
+	}
+	user_data.HashedPassword, err = auth.HashPassword(user_data.HashedPassword)
+	if err != nil {
+		log.Printf("Error hashing password: %s", err)
+		respondWithError(w, 500, "Error hashing passowrd")
+		return
+	}
+	err = cfg.databaseQueries.UpdateUserPassword(r.Context(), database.UpdateUserPasswordParams{HashedPassword: user_data.HashedPassword, Email: user_data.Email, ID: user_id})
+	if err != nil {
+		log.Printf("Error updating password and email: %s", err)
+		respondWithError(w, 500, "Error updating password and email")
+		return
+	}
+	user, err := cfg.databaseQueries.GetUserByEmail(r.Context(), user_data.Email)
+	if err != nil {
+		log.Printf("Error getting user by email: %s", err)
+		respondWithError(w, 500, "Error getting user by email")
+		return
+	}
+	user_response := User{}
+	user_response.CreatedAt = user.CreatedAt
+	user_response.Email = user.Email
+	user_response.ID = user.ID
+	user_response.UpdatedAt = user.UpdatedAt
+	respondWithJSON(w, 200, user_response)
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -394,6 +442,7 @@ func main() {
 	serverMux.HandleFunc("POST /api/login", apiCfg.login)
 	serverMux.HandleFunc("POST /api/refresh", apiCfg.refresh)
 	serverMux.HandleFunc("POST /api/revoke", apiCfg.revoke)
+	serverMux.HandleFunc("PUT /api/users", apiCfg.userEmailUpdate)
 	server := http.Server{
 		Addr:    port,
 		Handler: serverMux,
