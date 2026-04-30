@@ -81,11 +81,16 @@ type user_email_password struct {
 }
 
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
-	Token     string    `json:"token"`
+	ID           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token,omitempty"`
+	RefreshToken string    `json:"refresh_token,omitempty"`
+}
+
+type response_struct struct {
+	Token string `json:"token"`
 }
 
 func cleanInput(s string, words []string) string {
@@ -180,10 +185,9 @@ func (cfg *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 		respondWithError(w, 401, "Incorrect email or password")
 		return
 	}
-	expiration_time := params.ExpiresInSeconds
-	if expiration_time == 0 || expiration_time > 3600 {
-		expiration_time = 60 * 60
-	}
+
+	expiration_time := 60 * 60
+
 	user_struct := User{}
 	user_struct.CreatedAt = user.CreatedAt
 	user_struct.UpdatedAt = user.UpdatedAt
@@ -194,12 +198,19 @@ func (cfg *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 		fmt.Println("Error getting token")
 		return
 	}
-	if valid {
-		respondWithJSON(w, 200, user_struct)
-	} else {
+	if !valid {
 		respondWithError(w, 401, "Incorrect email or password")
-	}
 
+	} else {
+		user_struct.RefreshToken = auth.MakeRefreshToken()
+		refreshParams := database.CreateRefreshParams{Token: user_struct.RefreshToken, UserID: user_struct.ID}
+		_, err = cfg.databaseQueries.CreateRefresh(r.Context(), refreshParams)
+		if err != nil {
+			fmt.Println("error creating database token entry")
+			return
+		}
+		respondWithJSON(w, 200, user_struct)
+	}
 }
 
 /*
@@ -238,13 +249,13 @@ func (cfg *apiConfig) chirps_handler(w http.ResponseWriter, r *http.Request) {
 	bearer_token, err := auth.GetBearerToken(r.Header)
 	if err != nil {
 		fmt.Println("Error getting token")
-		respondWithJSON(w, 401, "Unauthorized")
+		respondWithError(w, 401, "Unauthorized")
 		return
 	}
 	user_id, err := auth.ValidateJWT(bearer_token, cfg.env_JWT_scret)
 	if err != nil {
 		fmt.Println("error validating JWT")
-		respondWithJSON(w, 401, "Unauthorized")
+		respondWithError(w, 401, "Unauthorized")
 		return
 	}
 	banned_words := []string{"kerfuffle", "sharbert", "fornax"}
@@ -305,6 +316,50 @@ func (cfg *apiConfig) chirps_get_individual_handler(w http.ResponseWriter, r *ht
 	respondWithJSON(w, 200, chirp_data)
 }
 
+func (cfg *apiConfig) refresh(w http.ResponseWriter, r *http.Request) {
+
+	bearer_token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		fmt.Println("Error getting token")
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	Refresh_row, err := cfg.databaseQueries.GetRefresh(r.Context(), bearer_token)
+	if err != nil {
+		fmt.Println("Error getting user from database using token")
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	if Refresh_row.RevokedAt.Valid {
+		fmt.Println("Token Revoked")
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	if time.Now().After(Refresh_row.ExpiresAt) {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	JWTToken, err := auth.MakeJWT(Refresh_row.UserID, cfg.env_JWT_scret, time.Duration(3600)*time.Second)
+	if err != nil {
+		fmt.Println("Error making JWT")
+		respondWithError(w, 500, "Error making JWT")
+		return
+	}
+	respondWithJSON(w, 200, response_struct{JWTToken})
+}
+
+func (cfg *apiConfig) revoke(w http.ResponseWriter, r *http.Request) {
+
+	bearer_token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		fmt.Println("Error getting token")
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	cfg.databaseQueries.RevokeRefreshToken(r.Context(), bearer_token)
+	w.WriteHeader(204)
+}
+
 func main() {
 	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
@@ -337,6 +392,8 @@ func main() {
 	serverMux.HandleFunc("GET /api/chirps", apiCfg.chirps_get_handler)
 	serverMux.HandleFunc("GET /api/chirps/{chirpID}", apiCfg.chirps_get_individual_handler)
 	serverMux.HandleFunc("POST /api/login", apiCfg.login)
+	serverMux.HandleFunc("POST /api/refresh", apiCfg.refresh)
+	serverMux.HandleFunc("POST /api/revoke", apiCfg.revoke)
 	server := http.Server{
 		Addr:    port,
 		Handler: serverMux,
