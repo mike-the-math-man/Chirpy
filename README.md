@@ -4,11 +4,14 @@ A simple Twitter-like API built with Go as part of the boot.dev Go HTTP Servers 
 
 ## Features
 
-- **User Management**: Create users with email addresses.
+- **User Management**: Create users with email addresses and hashed passwords.
+- **Authentication**: JWT-based authentication with refresh tokens.
 - **Chirp Creation**: Post short messages (chirps) with automatic profanity filtering.
+- **Chirpy Red**: Premium users who can post without profanity filtering.
 - **Admin Tools**: View metrics and reset data (in dev mode).
 - **File Serving**: Static file serving for web assets.
 - **Health Check**: Basic API health endpoint.
+- **Webhooks**: Integration with Polka for user upgrades.
 
 ## API Endpoints
 
@@ -31,6 +34,7 @@ The API exposes the following resources, paths, HTTP methods, and JSON shapes.
     - `created_at` (timestamp)
     - `updated_at` (timestamp)
     - `email` (string)
+    - `is_chirpy_red` (boolean)
 
 - `POST /api/login`
   - Description: Authenticate a user
@@ -44,6 +48,7 @@ The API exposes the following resources, paths, HTTP methods, and JSON shapes.
     - `email` (string)
     - `token` (JWT string)
     - `refresh_token` (string)
+    - `is_chirpy_red` (boolean)
 
 ### Authenticated User Endpoints
 
@@ -58,6 +63,7 @@ The API exposes the following resources, paths, HTTP methods, and JSON shapes.
     - `created_at` (timestamp)
     - `updated_at` (timestamp)
     - `email` (string)
+    - `is_chirpy_red` (boolean)
 
 - `POST /api/chirps`
   - Description: Create a new chirp
@@ -74,6 +80,9 @@ The API exposes the following resources, paths, HTTP methods, and JSON shapes.
 
 - `GET /api/chirps`
   - Description: List all chirps
+  - Query Parameters:
+    - `author_id` (optional UUID): Filter chirps by author
+    - `sort` (optional): Sort by created_at ("asc" or "desc")
   - Request: none
   - Response JSON: array of chirp objects
     - `id` (UUID)
@@ -92,6 +101,11 @@ The API exposes the following resources, paths, HTTP methods, and JSON shapes.
     - `body` (string)
     - `user_id` (UUID)
 
+- `DELETE /api/chirps/{chirpID}`
+  - Description: Delete a chirp (users can only delete their own chirps)
+  - Requires: `Authorization: Bearer <JWT>` header
+  - Response: HTTP 204 No Content
+
 ### Refresh Token Endpoints
 
 - `POST /api/refresh`
@@ -103,6 +117,16 @@ The API exposes the following resources, paths, HTTP methods, and JSON shapes.
 - `POST /api/revoke`
   - Description: Revoke the current refresh token
   - Requires: `Authorization: Bearer <refresh_token>` header
+  - Response: HTTP 204 No Content
+
+### Webhook Endpoints
+
+- `POST /api/polka/webhooks`
+  - Description: Handle webhooks from Polka for user upgrades
+  - Requires: `Authorization: ApiKey <polka_api_key>` header
+  - Request JSON:
+    - `event` (string): Event type (e.g., "user.upgraded")
+    - `data` (object): Event data containing `user_id` (string)
   - Response: HTTP 204 No Content
 
 ### Admin / Dev Endpoints
@@ -133,6 +157,8 @@ The API exposes the following resources, paths, HTTP methods, and JSON shapes.
   - `github.com/joho/godotenv` - Environment variable loading
   - `github.com/lib/pq` - PostgreSQL driver
   - `github.com/google/uuid` - UUID generation
+  - `github.com/golang-jwt/jwt/v5` - JWT token handling
+  - `github.com/alexedwards/argon2id` - Password hashing
 
 ## Setup and Installation
 
@@ -157,7 +183,14 @@ Create a PostgreSQL database named `chirpy`:
 CREATE DATABASE chirpy;
 ```
 
-Update the `.env` file with your database connection (default provided):
+Update the `.env` file with your database connection and other configuration (default provided):
+
+```
+DB_URL="postgres://postgres:postgres@localhost:5432/chirpy?sslmode=disable"
+PLATFORM="dev"
+JWT_SECRET="your-jwt-secret-here"
+POLKA_KEY="your-polka-api-key-here"
+```
 
 ### 4. Run Database Migrations
 
@@ -207,7 +240,11 @@ curl -X POST http://localhost:8080/api/chirps \
   -d '{"body": "Hello, world!", "user_id": "your-user-uuid"}'
 ```
 
-Note: Chirps are limited to 140 characters and profanity words ("kerfuffle", "sharbert", "fornax") are filtered.
+Note: Chirps are limited to 140 characters and profanity words ("kerfuffle", "sharbert", "fornax") are filtered. Users with Chirpy Red status can post without profanity filtering.
+
+### Upgrading to Chirpy Red
+
+Chirpy Red is a premium feature that allows users to post chirps without profanity filtering. Users can be upgraded via webhooks from the Polka payment service.
 
 ### Admin Reset (Dev Mode Only)
 
@@ -232,6 +269,8 @@ go build -o chirpy .
    ```
    DB_URL="postgres://postgres:postgres@localhost:5432/chirpy?sslmode=disable"
    PLATFORM="dev"  # or "prod" for production
+   JWT_SECRET="your-jwt-secret-here"
+   POLKA_KEY="your-polka-api-key-here"
    ```
 3. Run the executable:
    ```bash
@@ -244,10 +283,13 @@ The server will start on `http://localhost:8080`.
 
 - **DB_URL**: PostgreSQL connection string
 - **PLATFORM**: Set to "dev" for development features (like reset endpoint), "prod" for production
+- **JWT_SECRET**: Secret key for JWT token signing
+- **POLKA_KEY**: API key for Polka webhook authentication
 
 ## Project Structure
 
 - `main.go` - Main server code
+- `internal/auth/` - Authentication utilities (JWT, password hashing, refresh tokens)
 - `internal/database/` - Generated database code (sqlc)
 - `sql/schema/` - Database migration files (Goose)
 - `sql/queries/` - SQL query files (sqlc)

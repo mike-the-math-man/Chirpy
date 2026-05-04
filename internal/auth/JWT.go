@@ -52,3 +52,13 @@ func GetBearerToken(headers http.Header) (string, error) {
 	token_string := strings.Split(bearer_token, " ")[1]
 	return token_string, nil
 }
+
+func GetAPIKey(headers http.Header) (string, error) {
+	api_key := headers.Get("Authorization")
+	if api_key == "" {
+		fmt.Println("api_key = empty")
+		return api_key, fmt.Errorf("No auth")
+	}
+	api_string := strings.Split(api_key, " ")[1]
+	return api_string, nil
+}

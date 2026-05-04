@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -24,6 +25,7 @@ type apiConfig struct {
 	databaseQueries *database.Queries
 	env_platform    string
 	env_JWT_scret   string
+	env_Polka_key   string
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -81,16 +83,24 @@ type user_email_password struct {
 }
 
 type User struct {
-	ID           uuid.UUID `json:"id"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	Email        string    `json:"email"`
-	Token        string    `json:"token,omitempty"`
-	RefreshToken string    `json:"refresh_token,omitempty"`
+	ID            uuid.UUID `json:"id"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	Email         string    `json:"email"`
+	Token         string    `json:"token,omitempty"`
+	RefreshToken  string    `json:"refresh_token,omitempty"`
+	Is_chirpy_red bool      `json:"is_chirpy_red"`
 }
 
 type response_struct struct {
 	Token string `json:"token"`
+}
+
+type webhook_data struct {
+	Event string `json:"event"`
+	Data  struct {
+		UserID string `json:"user_id"`
+	} `json:"data"`
 }
 
 func cleanInput(s string, words []string) string {
@@ -157,6 +167,7 @@ func (cfg *apiConfig) users_handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user_struct := User{}
+	user_struct.Is_chirpy_red = user.IsChirpyRed
 	user_struct.CreatedAt = user.CreatedAt
 	user_struct.UpdatedAt = user.UpdatedAt
 	user_struct.Email = user.Email
@@ -189,6 +200,7 @@ func (cfg *apiConfig) login(w http.ResponseWriter, r *http.Request) {
 	expiration_time := 60 * 60
 
 	user_struct := User{}
+	user_struct.Is_chirpy_red = user.IsChirpyRed
 	user_struct.CreatedAt = user.CreatedAt
 	user_struct.UpdatedAt = user.UpdatedAt
 	user_struct.Email = user.Email
@@ -272,12 +284,28 @@ func (cfg *apiConfig) chirps_handler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) chirps_get_handler(w http.ResponseWriter, r *http.Request) {
-	chirps, err := cfg.databaseQueries.GetChirps(r.Context())
+	var chirps []database.Chirp
+	var err error
+	s := r.URL.Query().Get("author_id")
+	// s is a string that contains the value of the author_id query parameter
+	// if it exists, or an empty string if it doesn't
+	if s != "" {
+		author_id, err := uuid.Parse(s)
+		if err != nil {
+			fmt.Printf("error parsing user_id %v\n", err)
+			respondWithError(w, 500, "")
+			return
+		}
+		chirps, err = cfg.databaseQueries.GetChirpsAuth(r.Context(), author_id)
+	} else {
+		chirps, err = cfg.databaseQueries.GetChirps(r.Context())
+	}
 	if err != nil {
 		fmt.Printf("error getting chirps %v\n", err)
 		respondWithError(w, 500, "Error getting chirps")
 		return
 	}
+
 	chirp_data_list := []full_chirp{}
 	for _, chirp := range chirps {
 		chirp_data := full_chirp{}
@@ -288,7 +316,17 @@ func (cfg *apiConfig) chirps_get_handler(w http.ResponseWriter, r *http.Request)
 		chirp_data.UserId = chirp.UserID
 		chirp_data_list = append(chirp_data_list, chirp_data)
 	}
-
+	sorted := r.URL.Query().Get("sort")
+	//fmt.Print(sorted)
+	switch sorted {
+	case "":
+		respondWithJSON(w, 200, chirp_data_list)
+		return
+	case "desc":
+		sort.Slice(chirp_data_list, func(i, j int) bool { return chirp_data_list[i].CreatedAt.After(chirp_data_list[j].CreatedAt) })
+	case "asc":
+		sort.Slice(chirp_data_list, func(i, j int) bool { return chirp_data_list[i].CreatedAt.Before(chirp_data_list[j].CreatedAt) })
+	}
 	respondWithJSON(w, 200, chirp_data_list)
 }
 
@@ -401,11 +439,90 @@ func (cfg *apiConfig) userEmailUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	user_response := User{}
+	user_response.Is_chirpy_red = user.IsChirpyRed
 	user_response.CreatedAt = user.CreatedAt
 	user_response.Email = user.Email
 	user_response.ID = user.ID
 	user_response.UpdatedAt = user.UpdatedAt
 	respondWithJSON(w, 200, user_response)
+}
+
+func (cfg *apiConfig) DeleteChirp(w http.ResponseWriter, r *http.Request) {
+	bearer_token, err := auth.GetBearerToken(r.Header)
+	if err != nil {
+		fmt.Println("Error getting token")
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	chirp_id_string := r.PathValue("chirpID")
+	chirp_id_uuid, err := uuid.Parse(chirp_id_string)
+	if err != nil {
+		fmt.Printf("error parsing user_id %v\n", err)
+		respondWithError(w, 403, "")
+		return
+	}
+	chirp, err := cfg.databaseQueries.GetChirp(r.Context(), chirp_id_uuid)
+	if err != nil {
+		fmt.Printf("error getting chirp %v\n", err)
+		respondWithError(w, 403, "")
+		return
+	}
+	user_id, err := auth.ValidateJWT(bearer_token, cfg.env_JWT_scret)
+	if err != nil {
+		fmt.Println("error validating JWT")
+		respondWithError(w, 403, "Unauthorized")
+		return
+	}
+	if chirp.UserID != user_id {
+		respondWithError(w, 403, "Unauthorized")
+		return
+	}
+	err = cfg.databaseQueries.DeleteChirp(r.Context(), chirp.ID)
+	if err != nil {
+		fmt.Println("error deleting chirp")
+		respondWithError(w, 403, "Unauthorized")
+		return
+	}
+	respondWithJSON(w, 204, "Deleted")
+}
+
+func (cfg *apiConfig) webhook_handler(w http.ResponseWriter, r *http.Request) {
+	api_key, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+		log.Printf("Error getting api key: %s", err)
+		respondWithError(w, 401, "Error getting api key")
+		return
+	}
+	if api_key != cfg.env_Polka_key {
+		respondWithError(w, 401, "Unauthorized")
+		return
+	}
+	decoder := json.NewDecoder(r.Body)
+	params := webhook_data{}
+	err = decoder.Decode(&params)
+	if err != nil {
+		log.Printf("Error decoding parameters: %s", err)
+		respondWithError(w, 500, "Error decoding parameters")
+		return
+	}
+	if params.Event != "user.upgraded" {
+		w.WriteHeader(204)
+		return
+	} else {
+		chirp_user_id_uuid, err := uuid.Parse(params.Data.UserID)
+		if err != nil {
+			fmt.Printf("error parsing user_id %v\n", err)
+			respondWithError(w, 500, "")
+			return
+		}
+		err = cfg.databaseQueries.UpgeadeRed(r.Context(), chirp_user_id_uuid)
+		if err != nil {
+			fmt.Printf("can't find user? %v\n", err)
+			respondWithError(w, 404, "")
+			return
+		}
+		w.WriteHeader(204)
+	}
 }
 
 func main() {
@@ -421,7 +538,9 @@ func main() {
 	var apiCfg apiConfig
 	platform := os.Getenv("PLATFORM")
 	jwt_auth := os.Getenv("JWT_SECRET")
+	polka_key := os.Getenv("POLKA_KEY")
 	apiCfg.env_JWT_scret = jwt_auth
+	apiCfg.env_Polka_key = polka_key
 	apiCfg.env_platform = platform
 	apiCfg.databaseQueries = dbQueries
 	serverMux := http.NewServeMux()
@@ -443,6 +562,8 @@ func main() {
 	serverMux.HandleFunc("POST /api/refresh", apiCfg.refresh)
 	serverMux.HandleFunc("POST /api/revoke", apiCfg.revoke)
 	serverMux.HandleFunc("PUT /api/users", apiCfg.userEmailUpdate)
+	serverMux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.DeleteChirp)
+	serverMux.HandleFunc("POST /api/polka/webhooks", apiCfg.webhook_handler)
 	server := http.Server{
 		Addr:    port,
 		Handler: serverMux,
